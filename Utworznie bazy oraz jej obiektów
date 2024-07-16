@@ -1,0 +1,188 @@
+CREATE DATABASE TaskManagementSystem;
+GO
+
+
+USE TaskManagementSystem2;
+GO
+
+
+CREATE TABLE Tenants (
+	TenantId INT IDENTITY(1,1) PRIMARY KEY,
+	TenantName NVARCHAR(100) NOT NULL,
+	TenantIsActive BIT NOT NULL DEFAULT 1,
+	TenantCreatedDate DATETIME NOT NULL DEFAULT GETDATE(),
+	TenantUpdatedDate DATETIME NOT NULL DEFAULT GETDATE()
+	);
+GO
+
+
+CREATE TABLE Users(
+	UserId INT IDENTITY(1,1) PRIMARY KEY,
+	TenantId INT NOT NULL FOREIGN KEY REFERENCES Tenants(TenantId),
+	UserName NVARCHAR(100) NOT NULL,
+	UserRole NVARCHAR(50) CHECK (UserRole IN ('basic', 'manager')),
+    ManagerId INT FOREIGN KEY REFERENCES Users(UserId),
+	UserIsActive BIT NOT NULL DEFAULT 1,
+	UserCreatedDate DATETIME NOT NULL DEFAULT GETDATE(),
+	UserUpdatedDate DATETIME NOT NULL DEFAULT GETDATE()
+);
+GO
+
+
+CREATE TABLE Tasks (
+	TaskId INT IDENTITY(1,1) PRIMARY KEY,
+	UserId INT NOT NULL FOREIGN KEY REFERENCES Users(UserId),
+	Title NVARCHAR(200) NOT NULL,
+	Priority INT NOT NULL CHECK (Priority BETWEEN 1 AND 5),
+	Description NVARCHAR(MAX),
+	Status NVARCHAR(50) CHECK (Status IN ('Pending', 'IN Progress', 'Completed')),
+	TaskCreatedAt DATETIME NOT NULL DEFAULT GETDATE(),
+	TaskUpdatedAt DATETIME NOT NULL DEFAULT GETDATE(),
+	TaskIsActive BIT NOT NULL DEFAULT 1
+);
+GO
+
+CREATE TABLE TaskHistory(
+	HistoryId INT IDENTITY(1,1) PRIMARY KEY,
+	TaskId INT NOT NULL FOREIGN KEY REFERENCES Tasks(TaskId),
+	UserId INT NOT NULL FOREIGN KEY REFERENCES Users(UserId),
+    ValueChange NVARCHAR(50) NOT NULL CHECK (ValueChange IN ('Title', 'Priority', 'Description', 'Status', 'TaskIsActive')),
+	BeforeChange NVARCHAR(MAX),
+	AfterChange NVARCHAR(MAX),
+	ChangeType NVARCHAR(50) NOT NULL CHECK (ChangeType IN ('Created', 'Edited', 'Deleted')),
+	ChangeDate DATETIME NOT NULL DEFAULT GETDATE()
+);
+GO
+
+
+
+CREATE PROCEDURE AddTask
+	@UserId INT,
+	@Title NVARCHAR(200),
+	@Priority INT,
+	@Description NVARCHAR(MAX)
+AS
+BEGIN 
+	INSERT INTO Tasks (UserId, Title, Priority, Description, Status)
+	VALUES (@UserId, @Title, @Priority, @Description, 'Pending');
+
+	DECLARE @TaskId INT = SCOPE_IDENTITY();
+
+	INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+	VALUES (@TaskId, @UserId, 'Title', null, @Title, 'Created');
+	
+	INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+	VALUES (@TaskId, @UserId, 'Priority', null, @Priority, 'Created');
+	
+	INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+	VALUES (@TaskId, @UserId, 'Description', null, @Description, 'Created');
+
+	RETURN @TaskId;
+
+END;
+GO
+
+
+
+CREATE PROCEDURE EditTask
+	@TaskId INT,
+	@UserId INT,
+	@Title NVARCHAR(200),
+	@Priority INT,
+	@Description NVARCHAR(MAX),
+	@Status NVARCHAR(50)
+AS
+BEGIN 
+	DECLARE @OldTitle NVARCHAR(200), @OldPriority INT, @OldDescription NVARCHAR(MAX), @OldStatus NVARCHAR(50);
+
+	
+    SELECT @OldTitle = Title, @OldPriority = Priority, @OldDescription = Description, @OldStatus = Status
+    FROM Tasks
+    WHERE TaskId = @TaskId;
+
+	UPDATE Tasks
+    SET Title = @Title, Priority = @Priority, Description = @Description, Status = @Status, TaskUpdatedAt = GETDATE()
+    WHERE TaskId = @TaskId;
+
+	 IF @OldTitle <> @Title 
+		BEGIN
+			INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+			VALUES (@TaskId, @UserId, 'Title', @OldTitle, @Title, 'Edited');
+		END;
+	 IF @OldPriority <> @Priority 
+		BEGIN
+			INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+			VALUES (@TaskId, @UserId, 'Priority', @OldPriority, @Priority, 'Edited');
+		END;	 
+	IF @OldDescription <> @Description 
+		BEGIN
+			INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+			VALUES (@TaskId, @UserId, 'Description', @OldDescription, @Description, 'Edited');
+		END;
+	IF @OldStatus <> @Status
+		BEGIN
+			INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+			VALUES (@TaskId, @UserId, 'Status', @OldStatus, @Status, 'Edited');
+		END;
+END;
+GO
+
+CREATE PROCEDURE DeleteTask
+	@TaskId INT,
+	@UserId INT
+AS
+BEGIN 
+	DECLARE @Title NVARCHAR(200);
+
+	SELECT @Title = Title
+	FROM Tasks
+	WHERE TaskId = @TaskId;
+
+	UPDATE Tasks SET TaskIsActive = 0
+	WHERE TaskId = @TaskId;
+
+	INSERT INTO TaskHistory (TaskId, UserId, ValueChange, BeforeChange, AfterChange, ChangeType)
+	VALUES (@TaskId, @UserId, 'TaskIsActive', 1, 0, 'Deleted');
+END;
+GO
+
+
+
+CREATE PROCEDURE GetUserTasks
+    @UserId INT
+AS
+BEGIN
+    SELECT u.UserName, TaskId, Title, Priority, Description, Status, TaskCreatedAt, TaskUpdatedAt
+    FROM Tasks t
+	JOIN Users u ON t.UserId = u.UserId
+    WHERE t.UserId = @UserId and TaskIsActive = 1
+    ORDER BY TaskCreatedAt DESC;
+END;
+GO
+
+
+CREATE PROCEDURE GetSubordinateManagerTasks
+    @ManagerId INT
+AS
+BEGIN
+    SELECT u.UserName, TaskId, Title, Priority, Description, Status, TaskCreatedAt, TaskUpdatedAt
+    FROM Tasks t
+	JOIN Users u ON t.UserId = u.UserId
+    WHERE u.ManagerId = @ManagerId and TaskIsActive = 1
+    ORDER BY TaskCreatedAt DESC;
+END;
+GO
+
+
+CREATE PROCEDURE GetStatisticsTask
+	@ManagerId INT
+AS
+BEGIN 
+	SELECT UserName, MONTH(TaskCreatedAt) as Month, Status, COUNT(TaskId) AS TaskCount 
+	FROM Tasks t 
+	JOIN Users u ON t.UserId = u.UserId
+	WHERE ManagerId = @ManagerId
+	GROUP BY UserName, MONTH(TaskCreatedAt), Status
+	ORDER BY Month, Username;
+END;
+GO
