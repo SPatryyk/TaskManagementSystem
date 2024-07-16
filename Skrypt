@@ -1,0 +1,33 @@
+DECLARE @TenantId INT, @UserId INT, @a INT, @b INT, @c INT, @Random INT, @Title NVARCHAR(200);
+
+-- Dodanie podmiotów
+SET @a = 1;
+WHILE @a <= 10
+BEGIN
+    INSERT INTO Tenants (TenantName) VALUES (CONCAT('TenantName', @a));
+    SET @TenantId = SCOPE_IDENTITY();
+
+    -- Dodanie użytkowników dla podmiotu
+    SET @b = 1;
+    WHILE @b <= 100
+    BEGIN
+        INSERT INTO Users (TenantId, UserName, UserRole, ManagerId) 
+        VALUES (@TenantId, CONCAT('User', @TenantId, '_nr_', @b), CASE WHEN @b % 20 = 0 OR @b = 1 THEN 'manager' ELSE 'basic' END,  (SELECT TOP 1 UserId FROM Users where UserRole = 'manager' ORDER BY NEWID()));
+        SET @UserId = SCOPE_IDENTITY();
+
+        -- Dodanie zadań dla użytkownika
+        SET @c = 1;
+        WHILE @c <= 1000
+        BEGIN
+			SET @Random = FLOOR(RAND() * 5) + 1;
+			SET @Title = CONCAT('Task ', @c, ' for User ', @UserId)
+            EXEC AddTask @UserId, @Title, @Random, 'Test';
+            SET @c = @c + 1;
+        END;
+
+        SET @b = @b + 1;
+    END;
+
+    SET @a = @a + 1;
+END;
+GO
